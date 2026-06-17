@@ -1,130 +1,125 @@
-# FitFindr — Starter Kit
+# FitFindr
 
-This starter kit contains everything you need to begin Project 2.
+FitFindr is a multi-tool AI agent that takes a natural-language request for a secondhand clothing item, finds the best-matching listing, suggests how to style it with the user's existing wardrobe, and writes a shareable caption for the find.
 
-## What's Included
-
-```
-ai201-project2-fitfindr-starter/
-├── data/
-│   ├── listings.json          # 40 mock secondhand listings
-│   └── wardrobe_schema.json   # Wardrobe format + example wardrobe
-├── utils/
-│   └── data_loader.py         # Helper functions for loading the data
-├── planning.md                # Your planning template — fill this out first
-└── requirements.txt           # Python dependencies
-```
+It runs three tools in sequence behind a single planning loop, passing state forward through one `session` dict. The LLM calls use Groq `llama-3.3-70b-versatile`.
 
 ## Setup
 
-**macOS / Linux:**
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+# macOS/Linux: source .venv/bin/activate
+# Windows:     source .venv/Scripts/activate
 pip install -r requirements.txt
 ```
 
-**Windows:**
-```bash
-python -m venv .venv
-source .venv/Scripts/activate
-pip install -r requirements.txt
-```
+Add a Groq API key (free at [console.groq.com](https://console.groq.com)) to a `.env` file in the project root:
 
-Set your Groq API key in a `.env` file (get a free key at [console.groq.com](https://console.groq.com)):
 ```
 GROQ_API_KEY=your_key_here
 ```
 
-## The Mock Listings Dataset
+Run the app, then open the localhost URL it prints (usually http://localhost:7860):
 
-`data/listings.json` contains 40 mock secondhand listings across categories (tops, bottoms, outerwear, shoes, accessories) and styles (vintage, y2k, grunge, cottagecore, streetwear, and more).
-
-Each listing has: `id`, `title`, `description`, `category`, `style_tags`, `size`, `condition`, `price`, `colors`, `brand`, and `platform`.
-
-Load it with:
-```python
-from utils.data_loader import load_listings
-listings = load_listings()
+```bash
+python app.py
 ```
 
-## The Wardrobe Schema
+CLI smoke test (happy path + no-results path):
 
-`data/wardrobe_schema.json` defines the format your agent uses to represent a user's existing wardrobe. It includes:
-
-- `schema`: field definitions for a wardrobe item
-- `example_wardrobe`: a sample wardrobe with 10 items you can use for testing
-- `empty_wardrobe`: a starting template for a new user
-
-Load an example wardrobe with:
-```python
-from utils.data_loader import get_example_wardrobe
-wardrobe = get_example_wardrobe()
+```bash
+python agent.py
 ```
+
+Tests:
+
+```bash
+pytest tests/ -v
+```
+
+## How It Works
+
+```
+user query → run_agent (planning loop) → search_listings → suggest_outfit → create_fit_card → session
+                                              (local)          (Groq LLM)        (Groq LLM)
+```
+
+`search_listings` is deterministic local data; `suggest_outfit` and `create_fit_card` call the LLM. Every step reads from and writes to the shared `session` dict, and two gates short-circuit the loop on failure.
 
 ## Tool Inventory
 
-Your README submission must document each tool's name, inputs, and return value. **These must exactly match your actual function signatures in `tools.py`.** Your documented interfaces will be checked against your actual function signatures in `tools.py` — if the parameter count or types contradict what's in the code, you may not receive full credit for that tool.
+### Tool 1 — `search_listings(description: str, size: str | None = None, max_price: float | None = None) -> list[dict]`
 
----
+- **Input:**
+  - `description` (str) — keywords describing the item
+  - `size` (str | None) — size filter, case-insensitive substring match
+  - `max_price` (float | None) — price ceiling, inclusive
+- **Output:** `list[dict]` — matching listing dicts sorted by relevance score descending. Each dict has: `id`, `title`, `description`, `category`, `style_tags`, `size`, `condition`, `price`, `colors`, `brand`, `platform`. Returns `[]` if nothing matches — never raises.
+- **Purpose:** Filters and scores 40 mock listings against the user's query using keyword overlap across the `title`, `description`, `style_tags`, `colors`, and `brand` fields.
 
-## Interaction Walkthrough
+### Tool 2 — `suggest_outfit(new_item: dict, wardrobe: dict) -> str`
 
-<!-- Walk through a complete interaction step by step: natural language query → each tool call (and why) → final fit card.
-     Walk through this carefully — it's how graders follow your agent's reasoning without a live demo.
-     Use a specific example — do not leave this as a template. -->
+- **Input:**
+  - `new_item` (dict) — a listing dict from `search_listings`
+  - `wardrobe` (dict) — wardrobe dict with an `'items'` key
+- **Output:** `str` — an outfit suggestion. If the wardrobe is empty, returns general styling advice. Never returns an empty string, never raises.
+- **Purpose:** Calls the Groq LLM (temp = 0.7) to suggest 1–2 outfit combinations using the new item and the user's existing wardrobe pieces.
 
-**User query:**
+### Tool 3 — `create_fit_card(outfit: str, new_item: dict) -> str`
 
-**Step 1 — Tool called:**
-- Tool:
-- Input:
-- Why this tool:
-- Output:
+- **Input:**
+  - `outfit` (str) — the suggestion string from `suggest_outfit`
+  - `new_item` (dict) — the listing dict
+- **Output:** `str` — a 2–4 sentence Instagram/TikTok-style caption. Returns a specific error string if `outfit` is empty. Never raises.
+- **Purpose:** Calls the Groq LLM (temp = 1.0) to generate a casual, shareable caption mentioning the item name, price, and platform once each.
 
-**Step 2 — Tool called:**
-- Tool:
-- Input:
-- Why this tool:
-- Output:
+## Planning Loop
 
-**Step 3 — Tool called:**
-- Tool:
-- Input:
-- Why this tool:
-- Output:
+The loop is conditional, not sequential. After each tool call there is an explicit gate:
 
-**Final output to user:**
+- **Gate 1:** if `search_listings` returns `[]` → set `session["error"]`, return immediately, never call `suggest_outfit`.
+- **Gate 2:** if `suggest_outfit` returns an empty or error string → set `session["error"]`, return immediately, never call `create_fit_card`.
 
----
+Only if both gates pass does the agent reach `create_fit_card` and return a complete session.
 
-## Error Handling and Fail Points
+## State Management
 
-<!-- For each tool, describe the specific failure mode and what your agent does in response.
-     This maps to the error handling section of the rubric (F5-C1). -->
+All state lives in a single `session` dict initialized at the start of each run. Keys:
 
-| Tool | Failure mode | Agent response |
-|------|-------------|----------------|
-| `search_listings` | | |
-| `suggest_outfit` | | |
-| `create_fit_card` | | |
+- `query` — raw input, never changes
+- `parsed` — LLM-extracted `description` / `size` / `max_price`
+- `search_results` — full filtered list
+- `selected_item` — `results[0]`, passed into `suggest_outfit`
+- `wardrobe` — passed in at start, never modified
+- `outfit_suggestion` — string from `suggest_outfit`, passed into `create_fit_card`
+- `fit_card` — final output string
+- `error` — `None` on success, a message string on any failure
 
----
+State passes forward by storing tool output in the `session` dict and reading it in the next step — no global variables, no re-prompting the user.
+
+## Error Handling
+
+- **`search_listings`** — returns `[]` on no match. The agent sets `error: "No listings found for '{description}'. Try broader keywords, a different size, or raising your price limit."`
+  *Verified:* query `"designer ballgown size XXS under $5"` → Panel 1 shows the error, Panels 2 & 3 empty.
+- **`suggest_outfit`** — empty wardrobe → general styling advice instead of a crash.
+  *Verified:* empty wardrobe + `"90s track jacket"` query → Panel 2 shows category-level advice with no named wardrobe pieces.
+- **`create_fit_card`** — empty outfit string → returns `"Outfit data is missing — can't generate a fit card."`
+  *Verified:* direct call with `""` → returns the guard string, no exception.
 
 ## Spec Reflection
 
-<!-- Answer both questions with at least 2–3 sentences each. -->
+**One way `planning.md` helped:** Designing the `session` dict keys before writing any code meant every tool knew exactly what field to read and write. When wiring `agent.py`, there were no naming conflicts or ambiguous handoffs — `selected_item` was always `selected_item`.
 
-**One way planning.md helped during implementation:**
+**One divergence:** The planning loop uses LLM-based query parsing (Groq extracts `description`/`size`/`max_price` as JSON) rather than regex. This was chosen because natural-language queries are too varied for reliable regex — "under $30", "$30 max", and "less than 30 dollars" would all need separate patterns, while the LLM handles all of them with a single prompt. Tradeoff: it adds one extra API call per query and requires a JSON-parsing fallback.
 
-**One divergence from your spec, and why:**
+## AI Usage
 
----
+**Instance 1 — `search_listings` implementation**
+- *Input to Claude:* Tool 1 spec from `planning.md` (inputs, scoring logic, failure mode) + instruction to use `load_listings()`.
+- *Output:* a working filter + score implementation.
+- *What I changed:* the size matching — the generated code used exact equality, and I changed it to a case-insensitive substring match (`.lower() in .lower()`) because listings use formats like `"S/M"` and `"XL (oversized)"`, not normalized sizes.
 
-## Where to Start
-
-1. **Read `planning.md` and fill it out before writing any code.**
-2. Verify the data loads correctly by running `python utils/data_loader.py`.
-3. Build and test each tool individually before connecting them through your planning loop.
-
-Your implementation files go in this same directory. There's no required file structure for your agent code — organize it however makes sense for your design.
+**Instance 2 — `run_agent()` planning loop**
+- *Input to Claude:* the full `session` dict structure + the planning-loop conditional logic + the agent diagram from `planning.md`.
+- *Output:* a working planning loop with gates.
+- *What I changed:* added LLM-based query parsing instead of regex, and added a JSON-parsing fallback for when the LLM returns malformed JSON.
