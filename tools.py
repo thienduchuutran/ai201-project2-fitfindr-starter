@@ -135,6 +135,7 @@ def search_listings(
 
 def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
     """
+    Start directly with the content — no preamble, no filler opening lines.
     Given a thrifted item and the user's wardrobe, suggest 1–2 complete outfits.
 
     Args:
@@ -178,7 +179,11 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
             f"{item_block}\n"
             "The user hasn't added their wardrobe yet. Give general styling advice: "
             "what kinds of pieces pair well with this item, what vibe/aesthetic it "
-            "suits, and 2-3 concrete styling tips. Keep it short and practical."
+            "suits, and 2-3 concrete styling tips. Keep it short and practical.\n"
+            # plain text renders cleanly in the Gradio Textbox (it doesn't parse
+            # markdown); no preamble so the UI panel opens with real content
+            "Use plain text only — no markdown, no asterisks, no bold formatting.\n"
+            "Start directly with the outfit suggestions — no preamble or filler opening lines."
         )
     else:
         # Format each wardrobe piece on one line. Wardrobe items use 'name' (not
@@ -199,7 +204,11 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
             f"THE USER'S WARDROBE:\n{wardrobe_block}\n\n"
             "Suggest 1-2 specific, complete outfit combinations that pair the new item "
             "with NAMED pieces from the wardrobe above. Reference the actual wardrobe "
-            "items by name. Be specific, not generic."
+            "items by name. Be specific, not generic.\n"
+            # same two constraints as the empty-wardrobe branch: plain text for the
+            # Textbox, and no filler preamble
+            "Use plain text only — no markdown, no asterisks, no bold formatting.\n"
+            "Start directly with the outfit suggestions — no preamble or filler opening lines."
         )
 
     try:
@@ -213,6 +222,7 @@ def suggest_outfit(new_item: dict, wardrobe: dict) -> str:
 
 def create_fit_card(outfit: str, new_item: dict) -> str:
     """
+    Start directly with the content — no preamble, no filler opening lines.
     Generate a short, shareable outfit caption for the thrifted find.
 
     Args:
@@ -250,7 +260,8 @@ def create_fit_card(outfit: str, new_item: dict) -> str:
         f"THE FIND: {new_item['title']} — ${new_item['price']:.2f} on {new_item['platform']}\n"
         f"THE OUTFIT: {outfit}\n\n"
         "Mention the item name, the price, and the platform naturally, once each. "
-        "Capture the vibe in specific terms."
+        "Capture the vibe in specific terms. "
+        "Start directly with the caption — no preamble."
     )
 
     try:

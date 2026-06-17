@@ -43,8 +43,40 @@ def handle_query(user_query: str, wardrobe_choice: str) -> tuple[str, str, str]:
            string and return it along with session["outfit_suggestion"] and
            session["fit_card"].
     """
-    # TODO: implement this function
-    return "Agent not yet implemented.", "", ""
+    # Guard: empty/whitespace query → don't run the agent, just prompt the user.
+    if not user_query or not user_query.strip():
+        return ("Please enter a search query.", "", "")
+
+    # Map the radio choice to a wardrobe. Anything that isn't the example option is
+    # treated as the empty (new-user) wardrobe.
+    wardrobe = (
+        get_example_wardrobe()
+        if wardrobe_choice == "Example wardrobe"
+        else get_empty_wardrobe()
+    )
+
+    # The agent owns all the logic; the UI just hands it inputs and reads the session
+    # back out — the same session dict contract used by the CLI in agent.py.
+    session = run_agent(user_query, wardrobe)
+
+    # Error path: surface the message in panel 1 only, and blank the other two so the
+    # UI never shows a stale/partial outfit or caption next to an error.
+    if session["error"] is not None:
+        return (session["error"], "", "")
+
+    # Success path: format the selected listing into a readable block for panel 1.
+    item = session["selected_item"]
+    listing_text = (
+        f"Title: {item['title']}\n"
+        f"Price: ${item['price']:.2f}\n"
+        f"Platform: {item['platform']}\n"
+        f"Condition: {item['condition']}\n"
+        f"Size: {item['size']}\n"
+        f"Style: {', '.join(item['style_tags'])}\n"
+        f"Description: {item['description']}"
+    )
+    # tuple order matches the outputs= wiring: (listing panel, outfit panel, fit-card panel)
+    return (listing_text, session["outfit_suggestion"], session["fit_card"])
 
 
 # ── interface ─────────────────────────────────────────────────────────────────
