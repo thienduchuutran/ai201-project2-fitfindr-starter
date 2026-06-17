@@ -137,16 +137,14 @@ For each tool, describe the specific failure mode you're handling and what the a
 
 Write out what a full user interaction looks like from start to finish — tool call by tool call. Use a specific example query.
 
+**What FitFindr does (plain English):** FitFindr takes one natural-language request for a secondhand clothing item, finds the best-matching real listing, then uses the user's existing wardrobe to suggest how to style it and writes a shareable caption for the find. The user's typed query triggers `search_listings`, then the top search result triggers `suggest_outfit` (using the chosen wardrobe), that outfit text triggers `create_fit_card`. All results accumulate in a single `session` dict that is passed forward step to step, and if any step produces nothing usable, most importantly when the search returns zero matches, the agent stores a message in `session["error"]`, stops early, and skips the remaining tools instead of feeding empty input downstream.
+
 **Example user query:** "I'm looking for a vintage graphic tee under $30. I mostly wear baggy jeans and chunky sneakers. What's out there and how would I style it?"
 
-**Step 1:**
-<!-- What does the agent do first? Which tool is called? With what input? -->
+**Step 1 — parse + search.** The agent parses the query into `description="vintage graphic tee"`, `size=None`, `max_price=30.0` and stores them in `session["parsed"]`. It calls `search_listings("vintage graphic tee", None, 30.0)`, which filters the 40 listings by price ≤ $30, scores the rest by keyword overlap, and returns matches (e.g. `lst_006` "Graphic Tee - 2003 Tour Bootleg Style", $24) into `session["search_results"]`. **Failure path:** if that list is empty, set `session["error"]` to a helpful "no matches" message and return now — do not continue.
 
-**Step 2:**
-<!-- What happens next? What was returned from step 1? What tool is called now? -->
+**Step 2 — select + suggest.** The agent picks the top-scored result into `session["selected_item"]` and calls `suggest_outfit(selected_item, wardrobe)`. With the example wardrobe it pairs the tee with named pieces (baggy jeans `w_001`, chunky sneakers `w_007`, denim jacket `w_006`); the LLM's outfit text is stored in `session["outfit_suggestion"]`. **Failure path:** an empty wardrobe doesn't error — the tool returns general styling advice instead.
 
-**Step 3:**
-<!-- Continue until the full interaction is complete -->
+**Step 3 — caption.** The agent calls `create_fit_card(outfit_suggestion, selected_item)`, which uses the item's title, price, and platform plus the outfit text to generate a casual OOTD caption, stored in `session["fit_card"]`. **Failure path:** if the outfit string is empty/whitespace, the tool returns a descriptive error string rather than raising.
 
-**Final output to user:**
-<!-- What does the user actually see at the end? -->
+**Final output to user:** The three panels in the UI show the formatted top listing (title, price, condition, platform), the outfit suggestion, and the fit-card caption, read directly from `session["selected_item"]`, `session["outfit_suggestion"]`, and `session["fit_card"]`. If `session["error"]` was set, the user instead sees that one message and the other two panels stay empty.
